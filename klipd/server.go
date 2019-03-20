@@ -34,10 +34,10 @@ func StartServer(password string, ip string, port int) {
 		for {
 			var packet = <-channel
 
-			connections.mutex.Lock()
 			// Write clipboard to ourself first before broadcasting
 			writeToClipboard(packet.data)
 
+			connections.mutex.Lock()
 			broadcastClipboardPacket(packet.sourceIp, packet.data, connections.connections)
 			connections.mutex.Unlock()
 		}
