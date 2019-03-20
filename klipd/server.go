@@ -44,7 +44,9 @@ func StartServer(password string, ip string, port int) {
 	}()
 
 	go watchClipboard(func(newData string) {
+		connections.mutex.Lock()
 		broadcastClipboardPacket(nil, packetData{Clipboard: newData}, connections.connections)
+		connections.mutex.Unlock()
 	})
 
 	log.Println("klipd daemon running on: ", builtAddress)
@@ -54,6 +56,9 @@ func StartServer(password string, ip string, port int) {
 			conn.SetWriteDelay(false)
 			conn.SetStreamMode(true)
 
+			connections.mutex.Lock()
+			connections.connections = append(connections.connections, conn)
+			connections.mutex.Unlock()
 			go serverHandleConnection(conn, channel, &connections)
 		}
 	}
@@ -63,10 +68,19 @@ func broadcastClipboardPacket(sourceIp net.Addr, data packetData, connections []
 	for _, conn := range connections {
 		if conn.RemoteAddr() != sourceIp {
 			// Broadcast new clipboard data
-			if (conn.SetWriteDeadline(defaultWriteDeadline()) != nil) ||
-				writePacket(data, conn) != nil {
+			var err = conn.SetWriteDeadline(defaultWriteDeadline())
+			if err != nil {
+				log.Println("Failed to send clipboard data to ", conn.RemoteAddr(), "! ", err)
 				// Close connection on error
 				_ = conn.Close()
+				continue
+			}
+			err = writePacket(data, conn)
+			if err != nil {
+				log.Println("Failed to send clipboard data to ", conn.RemoteAddr(), "! ", err)
+				// Close connection on error
+				_ = conn.Close()
+				continue
 			}
 		}
 	}
