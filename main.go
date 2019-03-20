@@ -1,8 +1,8 @@
 package main
 
 import (
+	"github.com/null-dev/klipd/klipd"
 	"github.com/urfave/cli"
-	"klipd/klipd"
 	"log"
 	"os"
 )
