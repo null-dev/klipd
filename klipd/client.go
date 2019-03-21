@@ -4,6 +4,7 @@ import (
 	"github.com/xtaci/kcp-go"
 	"log"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -15,6 +16,7 @@ func StartClient(password string, ip string, port int) {
 	}
 	var builtAddress = ip + ":" + strconv.Itoa(port)
 	var conn *kcp.UDPSession = nil
+	var connWriteMutex sync.Mutex
 
 	var connect func()
 	var retryConnection = func() {
@@ -42,27 +44,49 @@ func StartClient(password string, ip string, port int) {
 	connect()
 
 	go watchClipboard(func(newData string) {
-		var err = conn.SetWriteDeadline(defaultWriteDeadline())
-		if err != nil {
+		connWriteMutex.Lock()
+		if err := conn.SetWriteDeadline(defaultWriteDeadline()); err != nil {
 			log.Println("Connection error: ", err)
 			retryConnection()
+			connWriteMutex.Unlock()
 			return
 		}
-		err = writePacket(packetData{Clipboard: newData}, conn)
-		if err != nil {
+		if err := writePacket(packetData{Clipboard: newData}, conn); err != nil {
 			log.Println("Connection error: ", err)
 			retryConnection()
 		}
+		connWriteMutex.Unlock()
 	})
+
+	// Keep connection alive
+	go (func() {
+		for range time.Tick(DEFAULT_KEEP_ALIVE_FREQUENCY) {
+			connWriteMutex.Lock()
+			if err := conn.SetWriteDeadline(defaultWriteDeadline()); err != nil {
+				log.Println("Connection error: ", err)
+				retryConnection()
+				connWriteMutex.Unlock()
+				continue
+			}
+			if err := writeKeepAlive(conn); err != nil {
+				log.Println("Connection error: ", err)
+				retryConnection()
+			}
+			connWriteMutex.Unlock()
+		}
+	})()
 
 	for {
 		var data packetData
-		if (conn.SetReadDeadline(defaultReadDeadline()) == nil) &&
-			readMessage(conn, &data) == nil {
-			writeToClipboard(data)
-		} else {
-			// Reconnect on error
+		err, keepAlive := readMessage(conn, &data)
+		if err != nil {
+			log.Println("Connection error: ", err)
 			retryConnection()
+			continue
+		}
+
+		if !keepAlive {
+			writeToClipboard(data)
 		}
 	}
 }

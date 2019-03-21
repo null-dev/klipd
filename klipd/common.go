@@ -16,11 +16,12 @@ import (
 const DEFAULT_DATA_SHARDS = 10
 const DEFAULT_PARITY_SHARDS = 10
 const DEFAULT_POLL_FREQUENCY = time.Duration(250) * time.Millisecond
+const DEFAULT_KEEP_ALIVE_FREQUENCY = time.Duration(30) * time.Second
 
 var SALT = []byte("klipd-password-salt")
 
 func defaultReadDeadline() (t time.Time) {
-	return time.Now().Add(time.Duration(24) * time.Hour)
+	return time.Now().Add(DEFAULT_KEEP_ALIVE_FREQUENCY * 2)
 }
 
 func defaultWriteDeadline() (t time.Time) {
@@ -47,21 +48,26 @@ func writeToClipboard(data packetData) {
 	}
 }
 
-func readMessage(conn *kcp.UDPSession, message interface{}) (err error) {
+func readMessage(conn *kcp.UDPSession, message interface{}) (err error, keepAlive bool) {
 	var msgLengthEncoded = make([]byte, 4)
 
 	if _, readError := io.ReadFull(conn, msgLengthEncoded); readError != nil {
-		return readError
+		return readError, false
 	}
 
 	var msgLength = binary.LittleEndian.Uint32(msgLengthEncoded)
 
-	var msg = make([]byte, msgLength)
-	if _, readError := io.ReadFull(conn, msg); readError != nil {
-		return readError
+	// 0 byte length is keep-alive message
+	if msgLength == 0 {
+		return nil, true
 	}
 
-	return msgpack.Unmarshal(msg, message)
+	var msg = make([]byte, msgLength)
+	if _, readError := io.ReadFull(conn, msg); readError != nil {
+		return readError, false
+	}
+
+	return msgpack.Unmarshal(msg, message), false
 }
 
 func writePacket(data packetData, conn *kcp.UDPSession) (err error) {
@@ -84,6 +90,13 @@ func writeMessage(conn *kcp.UDPSession, message interface{}) (err error) {
 	}
 
 	return nil
+}
+
+func writeKeepAlive(conn *kcp.UDPSession) (err error) {
+	var msgLengthEncoded = make([]byte, 4)
+	binary.LittleEndian.PutUint32(msgLengthEncoded, 0)
+	_, outErr := conn.Write(msgLengthEncoded)
+	return outErr
 }
 
 func watchClipboard(callback func(newContents string)) {

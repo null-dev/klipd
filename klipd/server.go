@@ -95,12 +95,15 @@ func serverHandleConnection(conn *kcp.UDPSession, channel chan packet, openConne
 		if err != nil {
 			break
 		}
-		err = readMessage(conn, &data)
-		if err != nil {
+		thisError, keepAlive := readMessage(conn, &data)
+		if thisError != nil {
+			err = thisError
 			break
 		}
 
-		channel <- packet{sourceIp: conn.RemoteAddr(), data: data}
+		if !keepAlive {
+			channel <- packet{sourceIp: conn.RemoteAddr(), data: data}
+		}
 	}
 
 	// Close connection and remove connection from tracking list
